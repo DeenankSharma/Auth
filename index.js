@@ -5,16 +5,17 @@ import bcrypt from "bcrypt"
 import session from "express-session"
 import passport from "passport"
 import { Strategy } from "passport-local";
-import env from "dotenv"
-
+import dotenv from "dotenv"
+import GoogleStrategy from 'passport-google-oauth2'
 const app = express();
 const port = 3000;
 const saltRounds = 10
-env.config();
+
+dotenv.config("");
 
 const db = new pg.Client({
-  user: process.env.USERNAME,
-  host: process.env.HOST,
+  user: "postgres",
+  host: "localhost",
   database: process.env.DATABASE,
   password: process.env.PASSWORD,
   port: process.env.PORT
@@ -24,11 +25,12 @@ db.connect()
 
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static("public"));
-app.use(session(
-  { secret: process.env.SESSION_SECRET, resave: false, saveUninitialized: true ,cookie:{
-    maxAge : 1000*60*60*24
-  }}
-))
+app.use(session({
+  secret: process.env.SESSION_SECRET, 
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } 
+}));
 
 app.use(passport.initialize())
 app.use(passport.session())
@@ -83,14 +85,19 @@ app.post("/submit",async(req,res)=>{
   }
 })
 
-app.get("/auth/google",passport.authenticate("google",{
-  scope:["profile","email"] //user will be told that these things we will get about him
-}))
+"/auth/google",
+passport.authenticate("google", {
+  scope: ["profile", "email"],
+});
 
-app.get("/auth/google/secrets",passport.authenticate("google"),{
-  successRedirect:"/secrets",
-  failureRedirect:"/login"
+app.get(
+"/auth/google/secrets",
+passport.authenticate("google", {
+  successRedirect: "/secrets",
+  failureRedirect: "/login",
 })
+);
+
 
 app.get("/logout",(req,res)=>{
   req.logout((err)=>{
@@ -104,31 +111,36 @@ app.get("/logout",(req,res)=>{
 })
 
 app.post("/register", async (req, res) => {
-  const email = req.body.username
-  const password = req.body.password
+  const email = req.body.username;
+  const password = req.body.password;
+
   try {
+    const checkResult = await db.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
 
-    const response = await db.query("SELECT * FROM users WHERE email = $1", [email])
-    if (response.rows.length > 0) {
-      res.send("User already exists!")
-    }
-    else {
+    if (checkResult.rows.length > 0) {
+      res.redirect("/login");
+    } else {
       bcrypt.hash(password, saltRounds, async (err, hash) => {
-        const result = await db.query("INSERT INTO users (email , password) VALUES ($1 , $2) RETURNING * ;", [email, hash])
-        const user = result.rows[0]
-        req.login(user,(err)=>{
-          console.log(err)
-          res.redirect("secrets.ejs")
-        })
-        
-      })
-
+        if (err) {
+          console.error("Error hashing password:", err);
+        } else {
+          const result = await db.query(
+            "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
+            [email, hash]
+          );
+          const user = result.rows[0];
+          req.login(user, (err) => {
+            console.log("success");
+            res.redirect("/secrets");
+          });
+        }
+      });
     }
-  } catch (error) {
-    console.log(error)
+  } catch (err) {
+    console.log(err);
   }
-
-
 });
 
 app.post("/login",passport.authenticate("local",{
